@@ -20,6 +20,10 @@ dependencies {
     implementation 'org.postgresql:postgresql:42.7.3'
     implementation 'org.slf4j:slf4j-api:2.0.9'
     implementation 'ch.qos.logback:logback-classic:1.4.11'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.7'
+
+    runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.7'
+    runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.7'
 
     // dependencies for testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
