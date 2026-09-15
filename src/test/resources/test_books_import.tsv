@@ -1,0 +1,5 @@
+id	isbn	title	author	year
+2	9780596009205	Head First Java	Kathy Sierra, Bert Bates	2005
+3	9780321125217	Domain-Driven Design	Eric Evans	2003
+4	9780201485677	Refactoring: Improving the Design of Existing Code	Martin Fowler, Kent Beck, John Brant, William Opdyke, Don Roberts, Erich Gamma	1999
+5	9780134494166	Clean Architecture: A Craftsman's Guide to Software Structure and Design	Robert C. Martin	2017

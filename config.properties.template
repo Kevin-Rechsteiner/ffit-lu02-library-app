@@ -1,0 +1,4 @@
+# Copy this file as "config.properties" and set the variables
+jakarta.persistence.jdbc.url=
+jakarta.persistence.jdbc.user=
+jakarta.persistence.jdbc.password=
