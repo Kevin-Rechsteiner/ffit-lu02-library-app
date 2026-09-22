@@ -1,0 +1,1752 @@
+================================================================================
+NOTIZEN – LIBRARY APP (ffit-lu02-library-app)
+================================================================================
+Diese Datei erklaert das komplette Projekt: welche Datei was macht, welche
+Java-Konzepte darin vorkommen und warum es so gebaut ist.
+Gedacht als Lern- und Nachschlagehilfe.
+
+INHALT
+  1.  Ueberblick: Was kann die App?
+  2.  Projektstruktur
+  3.  Java-Grundlagen: Wie startet ein Programm?
+  4.  LibraryAppMain – die Konsolen-Anwendung
+  5.  Die Modell-Klassen: Book und User
+  6.  JPA / Hibernate – Objekte in der Datenbank speichern
+  7.  Die Repositories – Datenbankzugriff
+  8.  BookImporter – Dateien lesen
+  9.  Config – Konfiguration von aussen
+  10. PasswordHandler – Passwoerter sicher speichern
+  11. Logging mit SLF4J und Logback
+  12. JavalinMain – die REST-API
+  13. Tests mit JUnit
+  14. build.gradle – Abhaengigkeiten und Build
+  15. Wichtige Java-Konzepte im Projekt (Glossar)
+  16. Haeufige Fehler und wie man sie erkennt
+  17. Uebungsaufgaben zum Selbermachen
+
+
+================================================================================
+1. UEBERBLICK: WAS KANN DIE APP?
+================================================================================
+
+Die Library App ist eine Bibliotheksverwaltung. Es gibt zwei Arten, sie zu
+benutzen:
+
+  a) Als Konsolen-Programm (LibraryAppMain)
+     Man tippt Befehle ein, das Programm antwortet.
+
+  b) Als Web-Server / REST-API (JavalinMain)
+     Man ruft URLs im Browser auf und bekommt JSON zurueck.
+
+Die Daten liegen in einer PostgreSQL-Datenbank.
+
+Verfuegbare Konsolen-Befehle:
+
+  help                                  zeigt alle Befehle
+  listBooks                             listet alle Buecher
+  listBooks 5                           listet nur die ersten 5 Buecher
+  importBooks <PFAD>                    importiert Buecher aus einer TSV-Datei
+  createUser <Vorname> <Nachname> <Geburtsdatum> <Email> <Passwort>
+                                        legt einen Benutzer an
+  quit                                  beendet das Programm
+
+Beispiel:
+  createUser Max Mustermann 1990-05-21 max.mustermann@example.com geheim123
+
+
+================================================================================
+2. PROJEKTSTRUKTUR
+================================================================================
+
+ffit-lu02-library-app/
+│
+├── build.gradle                     Build-Konfiguration + Abhaengigkeiten
+├── config.properties                Zugangsdaten zur DB (NICHT in Git!)
+├── config.properties.template       Vorlage dafuer (IST in Git)
+├── Notizen.txt                      diese Datei
+│
+├── data/
+│   └── books.tsv                    grosse Beispiel-Importdatei
+│
+├── logs/                            Log-Dateien (automatisch erzeugt)
+│   └── app.log
+│
+└── src/
+    ├── main/
+    │   ├── java/ch/bzz/
+    │   │   ├── LibraryAppMain.java      Konsolen-Anwendung (Einstiegspunkt)
+    │   │   ├── JavalinMain.java         REST-API (zweiter Einstiegspunkt)
+    │   │   ├── Config.java              laedt config.properties
+    │   │   ├── PasswordHandler.java     Salt + Hash fuer Passwoerter
+    │   │   │
+    │   │   ├── model/                   DATEN (was existiert?)
+    │   │   │   ├── Book.java
+    │   │   │   └── User.java
+    │   │   │
+    │   │   ├── io/                      ZUGRIFF (lesen / schreiben)
+    │   │   │   ├── BookRepository.java
+    │   │   │   ├── UserRepository.java
+    │   │   │   └── BookImporter.java
+    │   │   │
+    │   │   └── db/                      Zwischenschicht fuer die API
+    │   │       └── BookPersistor.java
+    │   │
+    │   └── resources/
+    │       ├── logback.xml              Logging-Konfiguration
+    │       └── META-INF/
+    │           └── persistence.xml      JPA/Hibernate-Konfiguration
+    │
+    └── test/
+        ├── java/ch/bzz/
+        │   ├── LibraryAppMainTest.java  Tests fuer die Konsolen-App
+        │   └── JavalinMainTest.java     Tests fuer die REST-API
+        └── resources/
+            └── test_books_import.tsv    kleine Testdatei
+
+WARUM DIESE AUFTEILUNG (PACKAGES)?
+Das nennt man Schichtenarchitektur. Jede Schicht hat genau eine Aufgabe:
+
+  model  -> beschreibt nur Daten. Kennt keine Datenbank, keine Konsole.
+  io     -> weiss, WIE man Daten liest/schreibt (DB, Datei).
+  Main   -> redet mit dem Benutzer. Weiss nicht, wie SQL funktioniert.
+
+Vorteil: Wenn man die Datenbank austauscht, muss man nur "io" anpassen.
+Das Prinzip heisst "Single Responsibility Principle" (SRP):
+Eine Klasse soll genau einen Grund zum Aendern haben.
+
+
+================================================================================
+3. JAVA-GRUNDLAGEN: WIE STARTET EIN PROGRAMM?
+================================================================================
+
+Jedes Java-Programm braucht eine main-Methode:
+
+    public static void main(String[] args) { ... }
+
+Bedeutung der Schluesselwoerter:
+
+  public    von ueberall aufrufbar (die JVM muss rankommen)
+  static    gehoert zur Klasse, nicht zu einem Objekt
+            -> man braucht kein "new LibraryAppMain()" zum Starten
+  void      gibt nichts zurueck
+  String[] args   Kommandozeilen-Argumente (z.B. "java App hallo welt")
+
+Unser Projekt hat ZWEI main-Methoden:
+  LibraryAppMain.main()  -> Konsole
+  JavalinMain.main()     -> Webserver
+Man startet immer nur eine davon.
+
+WICHTIG: static vs. nicht-static
+  static  = existiert einmal fuer die ganze Klasse
+  normal  = existiert pro Objekt
+
+Beispiel aus LibraryAppMain:
+    private static final BookRepository bookRepository = new BookRepository();
+
+Das bookRepository existiert genau EINMAL im ganzen Programm.
+"final" heisst: die Variable kann nicht mehr auf etwas anderes zeigen.
+
+
+================================================================================
+4. LIBRARYAPPMAIN – DIE KONSOLEN-ANWENDUNG
+================================================================================
+Datei: src/main/java/ch/bzz/LibraryAppMain.java
+
+Das ist das Herzstueck. Ablauf:
+
+    1. Scanner oeffnen (liest von der Tastatur)
+    2. Solange es Eingaben gibt:
+         - Zeile lesen und trimmen (Leerzeichen entfernen)
+         - Pruefen: ist es ein Befehl MIT Argument? (importBooks, listBooks,
+           createUser)
+         - Sonst: in der COMMANDS-Map nachschauen
+         - Unbekannt? -> Fehlermeldung
+    3. Bei "quit" -> Schleife verlassen
+
+----------------------------------------
+4.1 Der Scanner
+----------------------------------------
+    Scanner scanner = new Scanner(System.in);
+
+    while (scanner.hasNextLine()) {
+        String input = scanner.nextLine().trim();
+        ...
+    }
+
+  System.in          = Standard-Eingabe (Tastatur oder Testdaten)
+  hasNextLine()      = gibt es noch eine Zeile?
+  nextLine()         = liest die naechste Zeile als String
+  trim()             = entfernt Leerzeichen am Anfang und Ende
+
+Warum "hasNextLine()" und nicht "while (true)"?
+Damit das Programm auch endet, wenn die Eingabe zu Ende ist (wichtig fuer
+Tests, wo die Eingabe aus einem festen Text kommt).
+
+----------------------------------------
+4.2 Die COMMANDS-Map
+----------------------------------------
+    private static final Map<String, Command> COMMANDS = new LinkedHashMap<>();
+
+    static {
+        COMMANDS.put("help", new Command("zeigt alle verfuegbaren Befehle an",
+                                         LibraryAppMain::printHelp));
+        COMMANDS.put("listBooks", ...);
+        COMMANDS.put("importBooks", ...);
+        COMMANDS.put("quit", new Command("beendet das Programm", () -> false));
+    }
+
+Was hier passiert:
+
+  Map<String, Command>
+      Eine Zuordnung: Text -> Befehl. Wie ein Woerterbuch.
+      Man fragt COMMANDS.get("help") und bekommt das passende Command-Objekt.
+
+  LinkedHashMap
+      Eine Map, die die Einfuege-Reihenfolge behaelt.
+      Wichtig, damit "help" die Befehle immer in derselben Reihenfolge ausgibt.
+      (Eine normale HashMap wuerde die Reihenfolge durcheinanderbringen.)
+
+  static { ... }
+      Ein "statischer Initialisierungsblock". Wird EINMAL ausgefuehrt, wenn die
+      Klasse geladen wird. Hier fuellen wir die Map.
+
+  Warum eine Map statt vieler if/else?
+      Neue Befehle hinzufuegen = eine Zeile. Kein Umbau der Schleife.
+      Das nennt man "erweiterbar" (Open/Closed Principle).
+
+----------------------------------------
+4.3 record und functional interface
+----------------------------------------
+    @FunctionalInterface
+    private interface CommandAction {
+        boolean execute();
+    }
+
+    private record Command(String description, CommandAction action) { }
+
+  interface
+      Ein Vertrag: "wer mich implementiert, muss execute() anbieten".
+
+  @FunctionalInterface
+      Markierung: das Interface hat GENAU EINE Methode.
+      Dadurch darf man eine Lambda-Funktion verwenden:
+          () -> false          ist eine Implementierung von execute()
+
+  record (ab Java 16)
+      Kurzform fuer eine Klasse, die nur Daten haelt.
+      Java generiert automatisch:
+        - Konstruktor
+        - Getter (heissen description() und action(), ohne "get"!)
+        - equals(), hashCode(), toString()
+
+      Ohne record braeuchte man ca. 25 Zeilen Code fuer dasselbe.
+
+  Lambda-Ausdruecke
+      () -> false                 Funktion ohne Parameter, gibt false zurueck
+      () -> listBooks(null)       ruft listBooks auf
+      LibraryAppMain::printHelp   "Method Reference" = Kurzform fuer
+                                  () -> printHelp()
+
+  Warum gibt execute() ein boolean zurueck?
+      true  = weitermachen
+      false = Programm beenden
+      Deshalb beendet "quit" mit () -> false das Programm.
+
+----------------------------------------
+4.4 Befehle mit Argumenten
+----------------------------------------
+Befehle wie "listBooks 5" stehen nicht als Ganzes in der Map. Darum wird
+vorher geprueft:
+
+    if (input.startsWith("createUser ")) {
+        createUser(input.substring("createUser ".length()).trim());
+        continue;
+    }
+
+  startsWith("createUser ")   beginnt die Eingabe damit? (mit Leerzeichen!)
+  substring(n)                schneidet die ersten n Zeichen ab
+                              -> es bleiben nur die Argumente uebrig
+  continue                    springt zum Anfang der while-Schleife
+                              (die Map wird uebersprungen)
+
+Beispiel:
+  Eingabe:  "createUser Max Mustermann 1990-05-21 max@example.com geheim123"
+  Nach substring/trim: "Max Mustermann 1990-05-21 max@example.com geheim123"
+
+----------------------------------------
+4.5 handleListBooks – Eingabe robust parsen
+----------------------------------------
+    String limitText = input.substring("listBooks".length()).trim();
+    if (!limitText.isEmpty()) {
+        try {
+            limit = Integer.parseInt(limitText);
+        } catch (NumberFormatException e) {
+            log.warn("Ungueltiges Limit fuer listBooks: '{}'", limitText, e);
+            System.out.println("Das Limit \"" + limitText + "\" konnte nicht gelesen werden.");
+        }
+    }
+
+  Integer.parseInt("5")        -> 5
+  Integer.parseInt("SEVEN")    -> wirft NumberFormatException!
+
+  try / catch
+      Im try-Block steht Code, der schiefgehen kann.
+      Im catch-Block steht, was dann passieren soll.
+      Ohne catch wuerde das Programm abstuerzen.
+
+  Merke: Integer (gross) kann null sein, int (klein) nicht.
+      Integer limit = null;   -> erlaubt, heisst "kein Limit angegeben"
+      int limit = null;       -> Compilerfehler!
+
+  Deshalb steht spaeter:
+      int effectiveLimit = limit == null ? 0 : limit;
+
+  Das ist der "ternaere Operator":
+      bedingung ? wertWennTrue : wertWennFalse
+  Gleichbedeutend mit:
+      int effectiveLimit;
+      if (limit == null) { effectiveLimit = 0; } else { effectiveLimit = limit; }
+
+----------------------------------------
+4.6 createUser – Schritt fuer Schritt
+----------------------------------------
+    String[] tokens = arguments.split("\\s+");
+    if (tokens.length != 5) { ... Fehlermeldung ... return; }
+
+  split("\\s+")
+      Zerlegt den Text an Leerzeichen.
+      \s  = irgendein Whitespace (Leerzeichen, Tab)
+      +   = ein oder mehrere davon
+      \\s im Java-String, weil der Backslash selbst escaped werden muss.
+
+      "Max  Mustermann 1990-05-21" -> ["Max", "Mustermann", "1990-05-21"]
+      (auch bei mehreren Leerzeichen korrekt)
+
+  tokens.length != 5
+      Wir erwarten genau 5 Werte. Sonst: freundlicher Abbruch mit "return".
+      "Fail fast" – lieber frueh pruefen als spaeter abstuerzen.
+
+Dann das Datum:
+
+    LocalDate dateOfBirth;
+    try {
+        dateOfBirth = LocalDate.parse(tokens[2]);
+    } catch (RuntimeException e) { ... return; }
+
+  LocalDate
+      Moderne Java-Klasse fuer ein Datum OHNE Uhrzeit (seit Java 8).
+      LocalDate.parse("1990-05-21") erwartet das ISO-Format yyyy-MM-dd.
+      Falsches Format -> DateTimeParseException (ein RuntimeException).
+
+  Warum nicht java.util.Date?
+      Date ist veraltet, unhandlich und nicht thread-safe.
+      LocalDate / LocalDateTime sind der heutige Standard.
+
+Dann Passwort und Speichern:
+
+    byte[] salt = PasswordHandler.generateSalt();
+    byte[] hash = PasswordHandler.hashPassword(password, salt);
+
+    User user = new User();
+    user.setFirstname(firstname);
+    ...
+    user.setPasswordSalt(Base64.getEncoder().encodeToString(salt));
+    user.setPasswordHash(Base64.getEncoder().encodeToString(hash));
+
+    userRepository.save(user);
+
+  new User()          erzeugt ein leeres Objekt
+  setXxx(...)         setzt die Felder (Setter)
+  Base64              wandelt byte[] in einen lesbaren Text um,
+                      damit man es als String in der DB speichern kann
+  save(user)          schreibt in die Datenbank
+
+Beachte: Das Klartext-Passwort wird NIE gespeichert. Nur Salt + Hash.
+
+  Zwei catch-Blöcke:
+    NoSuchAlgorithmException   falls "SHA-256" nicht verfuegbar waere
+                               (checked exception -> MUSS behandelt werden)
+    RuntimeException           falls die DB einen Fehler wirft
+                               (unchecked -> muss nicht, aber wir wollen es)
+
+----------------------------------------
+4.7 importBooks
+----------------------------------------
+    Path path = Path.of(filePath);
+
+    if (!Files.exists(path)) { ... Fehlermeldung ... return; }
+
+    try {
+        List<Book> books = bookImporter.readFromTsv(path);
+        bookRepository.saveAll(books);
+        log.info("Import abgeschlossen: {} Buecher aus {}", books.size(), filePath);
+    } catch (IOException e) { ... }
+
+  Path      moderner Ersatz fuer File (seit Java 7)
+  Files.exists(path)   gibt es die Datei?
+  IOException          checked exception beim Dateilesen -> catch ist Pflicht
+
+Reihenfolge: erst pruefen, dann lesen, dann speichern.
+
+
+================================================================================
+5. DIE MODELL-KLASSEN: BOOK UND USER
+================================================================================
+Dateien: src/main/java/ch/bzz/model/Book.java
+         src/main/java/ch/bzz/model/User.java
+
+Diese Klassen beschreiben NUR Daten. Sie enthalten keine Logik.
+Man nennt so etwas "Entity" (JPA) oder "POJO" (Plain Old Java Object).
+
+----------------------------------------
+5.1 Book
+----------------------------------------
+    @Entity
+    @Table(name = "books")
+    public class Book {
+
+        @Id
+        @GeneratedValue(strategy = GenerationType.IDENTITY)
+        private Integer id;
+
+        @Column(name = "isbn", nullable = false, length = 20, unique = true)
+        private String isbn;
+
+        @Column(name = "title", nullable = false, length = 255)
+        private String title;
+
+        @Column(name = "author", nullable = false, length = 255)
+        private String author;
+
+        @Column(name = "publication_year")
+        private Integer publicationYear;
+
+        public Book() { }                       // leerer Konstruktor
+        public Book(Integer id, String isbn, ...) { ... }   // voller Konstruktor
+
+        // Getter + Setter fuer jedes Feld
+
+        @Override
+        public String toString() {
+            return title;
+        }
+    }
+
+Die Annotationen im Detail:
+
+  @Entity
+      "Diese Klasse entspricht einer Datenbanktabelle."
+      Ohne @Entity wuerde Hibernate die Klasse ignorieren.
+
+  @Table(name = "books")
+      Der Tabellenname. Ohne diese Angabe wuerde die Tabelle "Book" heissen.
+
+  @Id
+      Das ist der Primaerschluessel – der eindeutige Identifikator.
+      Jede Entity MUSS genau ein @Id-Feld haben.
+
+  @GeneratedValue(strategy = GenerationType.IDENTITY)
+      Der Wert wird automatisch von der Datenbank erzeugt (Auto-Increment).
+      Man setzt die id also NICHT selbst:
+
+          Book b = new Book();
+          b.setTitle("Mein Buch");
+          em.persist(b);
+          // erst JETZT hat b.getId() einen Wert, z.B. 42
+
+      Andere Strategien:
+        IDENTITY   DB-Auto-Increment (unser Fall, typisch fuer PostgreSQL/MySQL)
+        SEQUENCE   eigene DB-Sequence (oft performanter bei Batch-Inserts)
+        AUTO       Hibernate entscheidet selbst
+        TABLE      eigene Tabelle fuer Zaehler (langsam, selten benutzt)
+
+  @Column(name = "...", nullable = false, length = 255, unique = true)
+      name       Spaltenname in der DB
+                 Java schreibt camelCase (publicationYear),
+                 SQL schreibt snake_case (publication_year).
+      nullable   false = NOT NULL, darf nicht leer sein
+      length     max. Laenge bei VARCHAR
+      unique     Wert darf nur einmal vorkommen (hier: keine doppelte ISBN)
+
+  toString()
+      Wird automatisch aufgerufen, wenn man das Objekt ausgibt:
+          System.out.println(book);   // gibt den Titel aus
+      Deshalb funktioniert listBooks so einfach.
+      @Override heisst: wir ersetzen die Methode aus der Oberklasse Object.
+
+WARUM ZWEI KONSTRUKTOREN?
+
+  public Book() { }
+      Der leere Konstruktor ist fuer Hibernate PFLICHT. Hibernate erzeugt
+      beim Laden aus der DB erst ein leeres Objekt und fuellt dann die Felder.
+      Fehlt er, gibt es zur Laufzeit einen Fehler.
+
+  public Book(Integer id, String isbn, ...)
+      Bequemlichkeit fuer uns, z.B. im BookImporter und in den Tests.
+
+  Wichtig: Sobald man EINEN Konstruktor selbst schreibt, erzeugt Java den
+  leeren nicht mehr automatisch. Man muss ihn dann von Hand hinzufuegen.
+
+----------------------------------------
+5.2 User
+----------------------------------------
+    @Entity
+    @Table(name = "users")
+    public class User {
+
+        @Id
+        @GeneratedValue(strategy = GenerationType.IDENTITY)
+        private Integer id;
+
+        @Column(name = "firstname", nullable = false, length = 255)
+        private String firstname;
+
+        @Column(name = "lastname", nullable = false, length = 255)
+        private String lastname;
+
+        @Column(name = "date_of_birth", nullable = false)
+        private LocalDate dateOfBirth;
+
+        @Column(name = "email", nullable = false, length = 255, unique = true)
+        private String email;
+
+        @Column(name = "password_hash", nullable = false, length = 255)
+        private String passwordHash;
+
+        @Column(name = "password_salt", nullable = false, length = 255)
+        private String passwordSalt;
+
+        public User() { }
+        // Getter + Setter
+    }
+
+Besonderheiten:
+
+  Tabellenname "users" (nicht "user")
+      "user" ist in PostgreSQL ein reserviertes Schluesselwort. Ohne den
+      Plural gaebe es SQL-Fehler.
+
+  LocalDate dateOfBirth
+      Hibernate legt daraus automatisch eine DATE-Spalte an.
+      Der Test prueft:  user.getDateOfBirth().toString()  ->  "1990-05-21"
+      LocalDate.toString() liefert immer ISO-Format. Praktisch.
+
+  email ist unique
+      Jede Adresse darf nur einmal vorkommen. Zweiter Versuch mit derselben
+      Mail -> Datenbankfehler (ConstraintViolation).
+
+  passwordHash und passwordSalt sind Strings, nicht byte[]
+      Weil wir sie Base64-kodiert speichern (siehe Kapitel 10).
+
+  Kein voller Konstruktor
+      Wir setzen die Felder in createUser einzeln per Setter. Bei 6 Feldern
+      ist das lesbarer als ein Konstruktor mit 6 Parametern, bei dem man
+      leicht die Reihenfolge verwechselt.
+
+ENCAPSULATION (KAPSELUNG)
+Alle Felder sind "private". Zugriff nur ueber Getter/Setter. Vorteile:
+  - man kann spaeter Pruefungen in den Setter einbauen
+  - man kann die interne Darstellung aendern, ohne alle Aufrufer zu brechen
+  - Hibernate und Jackson (JSON) erwarten dieses Muster
+
+
+================================================================================
+6. JPA / HIBERNATE – OBJEKTE IN DER DATENBANK SPEICHERN
+================================================================================
+
+BEGRIFFE, DIE MAN AUSEINANDERHALTEN MUSS:
+
+  JDBC         Die unterste Ebene. Man schreibt SQL selbst als String.
+  JPA          Ein Standard (Interface/Spezifikation) fuer ORM in Java.
+               Nur Vorschriften, kein Code der laeuft.
+  Hibernate    Die konkrete Implementierung von JPA, die wir benutzen.
+  ORM          Object-Relational Mapping: Java-Objekte <-> DB-Tabellen.
+
+Bild dazu:
+  Unser Code  ->  JPA (Interfaces)  ->  Hibernate  ->  JDBC  ->  PostgreSQL
+
+Vorteil von ORM: man schreibt kaum SQL. Statt
+
+    INSERT INTO books (isbn, title, author, publication_year) VALUES (...)
+
+schreibt man
+
+    em.persist(book);
+
+----------------------------------------
+6.1 persistence.xml
+----------------------------------------
+Datei: src/main/resources/META-INF/persistence.xml
+
+    <persistence-unit name="localPU">
+        <class>ch.bzz.model.Book</class>
+        <class>ch.bzz.model.User</class>
+        <properties>
+            <property name="hibernate.format_sql" value="true"/>
+            <property name="hibernate.hbm2ddl.auto" value="update"/>
+            <property name="hibernate.hikari.maximumPoolSize" value="10"/>
+            <property name="hibernate.show_sql" value="true"/>
+            <property name="jakarta.persistence.jdbc.driver" value="org.postgresql.Driver"/>
+        </properties>
+    </persistence-unit>
+
+  persistence-unit name="localPU"
+      Ein Name fuer diese Konfiguration. Im Code steht deshalb:
+          Persistence.createEntityManagerFactory("localPU", Config.getProperties())
+      Die Namen muessen exakt uebereinstimmen.
+
+  <class>...</class>
+      Jede Entity muss hier eingetragen werden. Genau deshalb wurde bei LU04b
+      die Zeile fuer ch.bzz.model.User hinzugefuegt. Fehlt sie, kennt
+      Hibernate die Klasse nicht und JPQL wie "FROM User u" schlaegt fehl.
+
+  hibernate.hbm2ddl.auto = update
+      Hibernate legt Tabellen und Spalten automatisch an bzw. ergaenzt sie
+      anhand der Entity-Klassen.
+      Moegliche Werte:
+        none          nichts tun (Produktion)
+        validate      nur pruefen, ob das Schema passt
+        update        fehlende Tabellen/Spalten ergaenzen (unser Fall)
+        create        bei jedem Start neu erstellen
+        create-drop   neu erstellen und beim Beenden loeschen
+      Deshalb brauchen wir kein schema.sql mehr.
+      ACHTUNG: "update" loescht keine alten Spalten und ist fuer Produktion
+      nicht empfohlen – dort nimmt man Migrations-Tools wie Flyway/Liquibase.
+
+  show_sql / format_sql
+      Hibernate schreibt das erzeugte SQL ins Log, huebsch formatiert.
+      Sehr nuetzlich zum Lernen: man sieht, welches SQL entsteht.
+
+  hikari.maximumPoolSize = 10
+      HikariCP ist ein Connection Pool. Datenbankverbindungen aufzubauen ist
+      teuer, deshalb werden bis zu 10 offene Verbindungen wiederverwendet.
+
+  Wo sind URL, Benutzer und Passwort?
+      Nicht hier! Die kommen zur Laufzeit aus config.properties, damit keine
+      Zugangsdaten in Git landen (siehe Kapitel 9).
+
+----------------------------------------
+6.2 EntityManager – die zentrale Klasse
+----------------------------------------
+    EntityManagerFactory emf =
+        Persistence.createEntityManagerFactory("localPU", Config.getProperties());
+
+    try (EntityManager em = emf.createEntityManager()) {
+        ...
+    }
+
+  EntityManagerFactory (EMF)
+      Teuer zu erzeugen (baut Connection Pool auf, liest Annotationen).
+      -> nur EINMAL pro Anwendung erstellen und wiederverwenden.
+
+  EntityManager (EM)
+      Billig, kurzlebig. Pro Arbeitseinheit einen neuen erzeugen und schliessen.
+
+  try-with-resources
+      try (EntityManager em = ...) { ... }
+      Am Ende des Blocks wird em.close() automatisch aufgerufen – auch bei
+      einer Exception. Das funktioniert, weil EntityManager das Interface
+      AutoCloseable implementiert. Verhindert Ressourcen-Lecks.
+
+DIE WICHTIGSTEN METHODEN:
+
+  em.persist(obj)      NEUES Objekt einfuegen (INSERT).
+                       Wirft einen Fehler, wenn es schon existiert.
+
+  em.merge(obj)        Einfuegen ODER aktualisieren (UPSERT).
+                       Existiert die id -> UPDATE, sonst INSERT.
+                       Gibt eine verwaltete Kopie zurueck.
+
+  em.find(Book.class, 1)   Objekt per Primaerschluessel laden.
+
+  em.remove(obj)       loeschen (DELETE)
+
+  em.createQuery(...)  JPQL-Abfrage
+
+WANN persist, WANN merge?
+  createUser  -> persist, weil der Benutzer garantiert neu ist
+  importBooks -> merge, weil die TSV-Datei ids mitbringt und ein Buch beim
+                 zweiten Import aktualisiert und nicht verdoppelt werden soll
+
+----------------------------------------
+6.3 Transaktionen
+----------------------------------------
+    em.getTransaction().begin();
+    ...  Aenderungen ...
+    em.getTransaction().commit();
+
+Eine Transaktion ist "alles oder nichts".
+
+  begin()      Transaktion starten
+  commit()     Aenderungen endgueltig speichern
+  rollback()   alles zuruecknehmen
+
+Jede schreibende Operation (persist, merge, remove, DELETE-Query) MUSS in
+einer Transaktion laufen. Lesen (SELECT) geht auch ohne.
+
+Beispiel Bankueberweisung: Geld abbuchen + Geld gutschreiben. Wenn nach dem
+Abbuchen ein Fehler passiert, muss auch das Abbuchen rueckgaengig gemacht
+werden. Deshalb rollback() im catch-Block.
+
+----------------------------------------
+6.4 JPQL – Abfragesprache
+----------------------------------------
+JPQL sieht wie SQL aus, arbeitet aber mit KLASSEN und FELDERN, nicht mit
+Tabellen und Spalten.
+
+    SELECT b FROM Book b ORDER BY b.id
+
+  "Book"  = die Java-Klasse (nicht die Tabelle "books")
+  "b.id"  = das Java-Feld (nicht die Spalte)
+
+Mit Parameter (so macht man es RICHTIG):
+
+    em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+      .setParameter("email", "max.mustermann@example.com")
+      .getResultStream()
+      .findFirst()
+      .orElse(null);
+
+  :email               Platzhalter, wird per setParameter gefuellt
+  User.class           sagt Java, welcher Typ zurueckkommt (typsicher)
+  getResultStream()    Ergebnis als Stream
+  findFirst()          Optional<User> – erstes Element, falls vorhanden
+  orElse(null)         null, wenn nichts gefunden wurde
+
+  WARUM PARAMETER UND KEINE STRING-VERKETTUNG?
+      Falsch:  "... WHERE u.email = '" + email + "'"
+      Das erlaubt SQL-Injection: gibt jemand
+          ' OR '1'='1
+      ein, aendert sich die Bedeutung der Abfrage.
+      Mit setParameter wird der Wert sauber als Wert behandelt.
+
+  setMaxResults(n)     entspricht SQL LIMIT n (siehe BookRepository)
+
+
+================================================================================
+7. DIE REPOSITORIES – DATENBANKZUGRIFF
+================================================================================
+
+Das "Repository Pattern": eine Klasse pro Entity, die den DB-Zugriff kapselt.
+Der Rest des Programms muss nichts von JPA wissen.
+
+----------------------------------------
+7.1 BookRepository
+----------------------------------------
+Datei: src/main/java/ch/bzz/io/BookRepository.java
+
+    public List<Book> getAll(int limit) {
+        try (EntityManager em = emf.createEntityManager()) {
+            var query = em.createQuery("SELECT b FROM Book b ORDER BY b.id", Book.class);
+            if (limit > 0) {
+                query.setMaxResults(limit);
+            }
+            List<Book> books = query.getResultList();
+            log.info("Loaded {} books from database", books.size());
+            return books;
+        }
+    }
+
+  ORDER BY b.id        stabile Reihenfolge – wichtig, damit die Tests
+                       verlaesslich "Effective Java" als erstes Buch sehen
+  limit > 0            0 bedeutet "kein Limit", also alle Buecher
+  var                  Typ-Inferenz (ab Java 10). Der Compiler kennt den Typ,
+                       man muss ihn nicht ausschreiben.
+  getResultList()      fuehrt die Abfrage aus und gibt eine Liste zurueck
+
+    public void saveAll(List<Book> books) {
+        try (EntityManager em = emf.createEntityManager()) {
+            try {
+                em.getTransaction().begin();
+                books.forEach(em::merge);
+                em.getTransaction().commit();
+                log.info("Saved {} books to database", books.size());
+            } catch (RuntimeException e) {
+                if (em.getTransaction().isActive()) {
+                    em.getTransaction().rollback();
+                }
+                log.error("Error during saving of books to the database:", e);
+            }
+        }
+    }
+
+  books.forEach(em::merge)
+      Fuer jedes Buch merge() aufrufen. em::merge ist eine Method Reference,
+      Kurzform fuer  book -> em.merge(book).
+
+  isActive() pruefen vor rollback()
+      Ein rollback auf einer nicht aktiven Transaktion wirft selbst einen
+      Fehler. Deshalb erst pruefen.
+
+----------------------------------------
+7.2 UserRepository
+----------------------------------------
+Datei: src/main/java/ch/bzz/io/UserRepository.java
+
+    public void save(User user) {
+        try (EntityManager em = emf.createEntityManager()) {
+            try {
+                em.getTransaction().begin();
+                em.persist(user);
+                em.getTransaction().commit();
+                log.info("Saved user to database: {}", user.getEmail());
+            } catch (RuntimeException e) {
+                if (em.getTransaction().isActive()) {
+                    em.getTransaction().rollback();
+                }
+                log.error("Error during saving of user to the database:", e);
+                throw e;
+            }
+        }
+    }
+
+Unterschied zu saveAll: hier steht am Ende "throw e".
+
+  Der Fehler wird geloggt UND weitergeworfen, damit der Aufrufer
+  (createUser in LibraryAppMain) dem Benutzer "Der Benutzer konnte nicht
+  angelegt werden." anzeigen kann. Ohne throw wuerde der Fehler still
+  verschwinden und der Benutzer denkt, es haette funktioniert.
+
+  Das Log enthaelt nur die E-Mail, nie das Passwort oder den Hash.
+
+----------------------------------------
+7.3 BookPersistor
+----------------------------------------
+Datei: src/main/java/ch/bzz/db/BookPersistor.java
+
+    public class BookPersistor {
+        private final BookRepository bookRepository = new BookRepository();
+
+        public List<Book> getAll(int limit) {
+            return bookRepository.getAll(limit);
+        }
+    }
+
+Eine sehr duenne Schicht, die JavalinMain benutzt. Sinn: die REST-API haengt
+nicht direkt am Repository. Wenn spaeter Caching oder Rechtepruefung dazu
+kommt, waere hier der Platz dafuer.
+
+
+================================================================================
+8. BOOKIMPORTER – DATEIEN LESEN
+================================================================================
+Datei: src/main/java/ch/bzz/io/BookImporter.java
+
+Liest eine TSV-Datei (Tab Separated Values) und erzeugt Book-Objekte.
+TSV ist wie CSV, nur mit Tabulator als Trennzeichen.
+
+    public List<Book> readFromTsv(Path filePath) throws IOException {
+        List<Book> books = new ArrayList<>();
+
+        try (BufferedReader reader =
+                 Files.newBufferedReader(filePath, StandardCharsets.UTF_8)) {
+
+            String headerLine = reader.readLine();
+            if (headerLine == null) {
+                return books;              // leere Datei -> leere Liste
+            }
+
+            String[] headers = headerLine.split("\t", -1);
+            int idIndex     = indexOf(headers, "id");
+            int isbnIndex   = indexOf(headers, "isbn");
+            int titleIndex  = indexOf(headers, "title");
+            int authorIndex = firstIndexOf(headers, "author", "authors");
+            int yearIndex   = firstIndexOf(headers, "year", "publication_year");
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) { continue; }
+
+                String[] columns = line.split("\t", -1);
+                books.add(new Book(
+                        Integer.parseInt(columns[idIndex].trim()),
+                        columns[isbnIndex].trim(),
+                        columns[titleIndex].trim(),
+                        columns[authorIndex].trim(),
+                        Integer.parseInt(columns[yearIndex].trim())
+                ));
+            }
+        }
+        return books;
+    }
+
+Die interessanten Details:
+
+  BufferedReader
+      Liest zeilenweise und puffert intern. Viel schneller als Zeichen
+      fuer Zeichen zu lesen. Bei 8800 Zeilen deutlich merkbar.
+
+  StandardCharsets.UTF_8
+      Zeichensatz explizit angeben. Sonst nimmt Java den Standard des
+      Betriebssystems – auf Windows oft Windows-1252, und dann werden
+      Umlaute in Buchtiteln kaputt.
+
+  throws IOException
+      Die Methode behandelt den Fehler nicht selbst, sondern gibt ihn nach
+      oben weiter. Der Aufrufer (importBooks) entscheidet, was zu tun ist.
+      Das ist eine "checked exception": der Compiler erzwingt die Behandlung.
+
+  split("\t", -1)
+      Trennt an Tabulatoren. Die -1 ist wichtig!
+      Ohne -1 wirft Java leere Felder am Ende weg:
+          "a\tb\t\t".split("\t")     -> ["a", "b"]          (2 Elemente)
+          "a\tb\t\t".split("\t", -1) -> ["a", "b", "", ""]  (4 Elemente)
+      Bei leeren Spalten am Zeilenende wuerde man sonst eine
+      ArrayIndexOutOfBoundsException bekommen.
+
+  while ((line = reader.readLine()) != null)
+      Ein haeufiges Java-Muster: zuweisen und gleichzeitig pruefen.
+      readLine() gibt null zurueck, wenn die Datei zu Ende ist.
+      Die innere Klammer ist Pflicht, sonst wuerde Java den Vergleich
+      zuerst auswerten.
+
+  Spalten per NAME suchen, nicht per Position
+      indexOf(headers, "title") sucht, in welcher Spalte "title" steht.
+      Vorteil: die Reihenfolge der Spalten in der Datei darf sich aendern.
+
+  firstIndexOf(headers, "author", "authors")
+      Varargs (String... names): mehrere Namen erlaubt. Nimmt den ersten,
+      der gefunden wird. So funktionieren beide Dateiformate, die uns
+      begegnet sind.
+
+  IllegalArgumentException bei fehlender Spalte
+      Fehlt eine Pflichtspalte, bringt es nichts weiterzumachen. Klarer
+      Fehler mit Spaltennamen ist besser als eine kryptische Exception
+      100 Zeilen spaeter.
+
+  line.isBlank()
+      Seit Java 11: true bei "" und bei "   ". Leere Zeilen werden
+      uebersprungen statt einen Fehler zu verursachen.
+
+
+================================================================================
+9. CONFIG – KONFIGURATION VON AUSSEN
+================================================================================
+Datei: src/main/java/ch/bzz/Config.java
+
+    public class Config {
+
+        private static final Properties properties = new Properties();
+
+        static {
+            try (FileInputStream input = new FileInputStream("config.properties")) {
+                properties.load(input);
+                log.info("Configuration loaded from config.properties");
+            } catch (IOException e) {
+                log.error("config.properties konnte nicht geladen werden", e);
+                throw new RuntimeException("config.properties konnte nicht geladen werden", e);
+            }
+        }
+
+        public static String get(String key) { return properties.getProperty(key); }
+        public static Properties getProperties() { return properties; }
+    }
+
+  Properties
+      Java-Klasse fuer Schluessel-Wert-Paare aus einer .properties-Datei.
+
+  static { ... }
+      Laedt die Datei genau einmal, beim ersten Zugriff auf Config.
+
+  throw new RuntimeException(...)
+      Ohne Konfiguration kann das Programm nichts Sinnvolles tun.
+      "Fail fast": lieber sofort mit klarer Meldung abbrechen als spaeter
+      mit einer unverstaendlichen NullPointerException.
+      Das "e" als zweiter Parameter erhaelt die Ursache (cause) – im
+      Stacktrace sieht man dann beides.
+
+Inhalt von config.properties (Beispiel):
+
+    jakarta.persistence.jdbc.url=jdbc:postgresql://localhost:5432/testdb
+    jakarta.persistence.jdbc.user=postgres
+    jakarta.persistence.jdbc.password=DEIN_PASSWORT
+
+  Die Schluessel sind NICHT frei erfunden – sie sind im JPA-Standard
+  definiert. Deshalb funktioniert
+
+      Persistence.createEntityManagerFactory("localPU", Config.getProperties())
+
+  ohne weiteren Code: die Properties ergaenzen/ueberschreiben die Werte aus
+  persistence.xml.
+
+WARUM UEBERHAUPT EINE EXTERNE DATEI?
+  1. Keine Passwoerter im Quellcode und damit nicht in Git.
+     config.properties steht in .gitignore.
+  2. Jeder Entwickler kann andere Zugangsdaten haben.
+  3. Test-, Entwicklungs- und Produktionsumgebung brauchen unterschiedliche
+     Datenbanken, aber denselben Code.
+
+  config.properties.template ist die Vorlage, die IN Git liegt. Neue
+  Entwickler kopieren sie zu config.properties und tragen ihre Daten ein.
+
+
+================================================================================
+10. PASSWORDHANDLER – PASSWOERTER SICHER SPEICHERN
+================================================================================
+Datei: src/main/java/ch/bzz/PasswordHandler.java
+
+    public static byte[] generateSalt() {
+        byte[] salt = new byte[16];
+        new SecureRandom().nextBytes(salt);
+        return salt;
+    }
+
+    public static byte[] hashPassword(String password, byte[] salt)
+            throws NoSuchAlgorithmException {
+        MessageDigest md = MessageDigest.getInstance("SHA-256");
+        md.update(salt);
+        return md.digest(password.getBytes());
+    }
+
+DIE GRUNDREGEL
+Passwoerter werden NIEMALS im Klartext gespeichert. Wenn die Datenbank
+gestohlen wird, haette der Angreifer sonst sofort alle Passwoerter – und
+weil viele Leute dasselbe Passwort mehrfach benutzen, auch Zugriff auf
+andere Dienste.
+
+WAS IST EIN HASH?
+Eine Einwegfunktion: aus dem Passwort wird ein Zahlenwert berechnet.
+
+  "geheim123"  ->  SHA-256  ->  a591a6d40bf4...
+
+  - gleiche Eingabe ergibt immer dieselbe Ausgabe
+  - aus der Ausgabe kann man die Eingabe nicht zurueckrechnen
+
+Beim Login rechnet man den Hash neu und vergleicht nur die Hashes.
+Das Klartextpasswort muss man nie kennen.
+
+WAS IST EIN SALT UND WARUM?
+Ein Salt ist eine zufaellige Bytefolge, die vor dem Hashen dazugemischt wird.
+
+  Problem ohne Salt:
+    Zwei Benutzer mit dem Passwort "geheim123" haetten denselben Hash.
+    Ein Angreifer sieht also sofort, wer dasselbe Passwort hat.
+    Und er kann eine "Rainbow Table" benutzen – eine vorberechnete Liste
+    von Millionen Passwoertern und ihren Hashes.
+
+  Mit Salt:
+    Benutzer A: Salt X + "geheim123" -> Hash 1
+    Benutzer B: Salt Y + "geheim123" -> Hash 2
+    Verschiedene Hashes. Vorberechnete Tabellen sind wertlos, weil der
+    Angreifer fuer jeden Salt neu rechnen muesste.
+
+  Der Salt ist KEIN Geheimnis. Er wird im Klartext (Base64) neben dem Hash
+  gespeichert, weil man ihn beim Login wieder braucht.
+
+DER CODE IM DETAIL
+
+  new byte[16]
+      16 Bytes = 128 Bit Zufall. Das ist die uebliche Mindestgroesse.
+
+  SecureRandom
+      Kryptografisch sicherer Zufallsgenerator.
+      NICHT java.util.Random verwenden! Das ist vorhersagbar, wenn man
+      genug Ausgaben kennt – fuer Sicherheit unbrauchbar.
+
+  MessageDigest.getInstance("SHA-256")
+      Holt die SHA-256-Implementierung. Falls der Algorithmus fehlt, gibt es
+      eine NoSuchAlgorithmException (deshalb das "throws").
+
+  md.update(salt)     mischt den Salt ein
+  md.digest(bytes)    mischt das Passwort ein und berechnet das Ergebnis
+
+  Ergebnis: 32 Bytes (256 Bit).
+
+WARUM BASE64?
+byte[] kann man nicht direkt als Text in eine VARCHAR-Spalte schreiben –
+es enthaelt beliebige Bytes, auch solche ohne Textdarstellung.
+Base64 wandelt Bytes in druckbare Zeichen (A-Z, a-z, 0-9, +, /) um.
+
+    String saltBase64 = Base64.getEncoder().encodeToString(salt);
+    String hashBase64 = Base64.getEncoder().encodeToString(hash);
+
+Zuruecklesen (beim Login):
+
+    byte[] salt = Base64.getDecoder().decode(user.getPasswordSalt());
+
+Base64 ist KEINE Verschluesselung – jeder kann es zurueckwandeln. Es ist
+nur eine Darstellungsform.
+
+SO WUERDE EIN LOGIN FUNKTIONIEREN (noch nicht implementiert)
+
+    1. Benutzer per E-Mail laden
+    2. Salt aus der DB Base64-dekodieren
+    3. hashPassword(eingegebenesPasswort, salt) berechnen
+    4. Base64-kodieren und mit user.getPasswordHash() vergleichen
+    5. Gleich -> eingeloggt
+
+HINWEIS FUER SPAETER
+SHA-256 ist fuer Passwoerter eigentlich zu SCHNELL. Ein Angreifer kann
+Milliarden Versuche pro Sekunde rechnen. Echte Anwendungen nehmen absichtlich
+langsame Verfahren wie bcrypt, scrypt oder Argon2. Fuer diese Schulaufgabe
+ist SHA-256 mit Salt aber genau das, was gefordert war.
+
+
+================================================================================
+11. LOGGING MIT SLF4J UND LOGBACK
+================================================================================
+Datei: src/main/resources/logback.xml
+
+WARUM NICHT EINFACH System.out.println?
+
+  System.out.println            Logging
+  ------------------            -------
+  immer sichtbar                Level einstellbar (ein/aus pro Paket)
+  nur Konsole                   Konsole, Datei, Netzwerk, ...
+  kein Zeitstempel              Zeit, Thread, Klasse automatisch
+  muss man rausloeschen         kann man einfach stummschalten
+
+Faustregel in diesem Projekt:
+  System.out.println  -> Ausgabe FUER DEN BENUTZER (Buchtitel, Fehlermeldung)
+  log.xxx             -> Information FUER DEN ENTWICKLER
+
+SLF4J vs. LOGBACK
+  SLF4J    nur die Schnittstelle (API), die man im Code benutzt
+  Logback  die Implementierung, die tatsaechlich schreibt
+  Vorteil: man kann Logback austauschen, ohne den Code zu aendern.
+
+VERWENDUNG IM CODE
+
+    private static final Logger log = LoggerFactory.getLogger(LibraryAppMain.class);
+
+    log.info("LibraryApp started");
+    log.warn("Ungueltiges Limit fuer listBooks: '{}'", limitText, e);
+    log.error("Fehler beim Laden der Buecher", e);
+
+  Die Klasse als Parameter -> im Log steht, woher die Meldung kommt.
+
+  Die geschweiften Klammern {} sind Platzhalter:
+      log.info("Loaded {} books", books.size());
+  Besser als  "Loaded " + books.size() + " books", weil die Verkettung nur
+  passiert, wenn das Level ueberhaupt aktiv ist. Bei ausgeschaltetem Logging
+  kostet es fast nichts.
+
+  Exception immer als LETZTEN Parameter uebergeben – dann landet der
+  komplette Stacktrace im Log.
+
+DIE LOG-LEVEL (von fein zu grob)
+  TRACE   sehr detailliert, selten benutzt
+  DEBUG   Entwicklungsinfos ("Reading books from TSV file ...")
+  INFO    normale Ereignisse ("LibraryApp started")
+  WARN    etwas ist schief, das Programm laeuft aber weiter
+  ERROR   echter Fehler
+
+Stellt man das Level auf INFO, werden DEBUG und TRACE nicht ausgegeben.
+
+DIE KONFIGURATION
+
+    <appender name="STDERR" class="...ConsoleAppender">
+        <filter class="...ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        ...
+    </appender>
+
+    <appender name="FILE" class="...RollingFileAppender">
+        <file>logs/app.log</file>
+        <rollingPolicy class="...TimeBasedRollingPolicy">
+            <fileNamePattern>logs/app.%d{yyyy-MM-dd}.log</fileNamePattern>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        ...
+    </appender>
+
+    <logger name="ch.bzz" level="DEBUG"/>
+    <logger name="com.zaxxer.hikari" level="WARN"/>
+    <logger name="org.hibernate" level="WARN"/>
+
+    <root level="DEBUG">
+        <appender-ref ref="FILE"/>
+        <appender-ref ref="STDERR"/>
+    </root>
+
+  appender        ein Ausgabeziel
+  STDERR          Konsole, aber nur ab Level ERROR (ThresholdFilter).
+                  So wird die Benutzerausgabe nicht von Logs zugemuellt.
+  FILE            alles ab DEBUG nach logs/app.log
+  RollingFile     jeden Tag eine neue Datei, 14 Tage Aufbewahrung,
+                  maximal 1 GB insgesamt. Sonst waechst die Datei endlos.
+  logger name=... Level pro Paket. Unser eigener Code (ch.bzz) auf DEBUG,
+                  Hibernate und Hikari nur auf WARN – die sind sehr
+                  gespraechig und wuerden das Log fluten.
+  root            Standard fuer alles, was nicht extra konfiguriert ist.
+
+  Das Ausgabeformat:
+      %d{HH:mm:ss}   Zeit
+      %-5level       Level, linksbuendig auf 5 Zeichen
+      [%thread]      Thread-Name
+      %logger{36}    Klassenname, gekuerzt
+      %msg%n         Nachricht + Zeilenumbruch
+
+  Der Ordner logs/ steht in .gitignore – Logs gehoeren nicht in Git.
+
+
+================================================================================
+12. JAVALINMAIN – DIE REST-API
+================================================================================
+Datei: src/main/java/ch/bzz/JavalinMain.java
+
+    public class JavalinMain {
+
+        private static final int PORT = 7070;
+        private static final BookPersistor bookPersistor = new BookPersistor();
+
+        public static void main(String[] args) {
+            Javalin app = Javalin.create();
+
+            app.get("/books", ctx -> {
+                int limit = 0;
+                String limitParam = ctx.queryParam("limit");
+                if (limitParam != null && !limitParam.isBlank()) {
+                    limit = Integer.parseInt(limitParam);
+                }
+                ctx.json(bookPersistor.getAll(limit));
+            });
+
+            app.start(PORT);
+            log.info("Javalin server started on port {}", PORT);
+        }
+    }
+
+Damit wird aus der Konsolen-App ein Webserver. Aufruf im Browser:
+
+    http://localhost:7070/books
+    http://localhost:7070/books?limit=3
+
+Antwort ist JSON:
+
+    [{"id":1,"isbn":"978-0134685991","title":"Effective Java", ...}, ...]
+
+DIE BEGRIFFE
+
+  Javalin           ein sehr kleines Web-Framework fuer Java
+  Javalin.create()  Server-Objekt erzeugen (laeuft noch nicht)
+  app.get(pfad, handler)
+                    "wenn jemand GET auf diesen Pfad macht, tu das"
+  app.start(7070)   Server startet und lauscht auf Port 7070
+
+  ctx (Context)     das Objekt, das Anfrage UND Antwort enthaelt
+  ctx.queryParam("limit")
+                    liest ?limit=3 aus der URL. Gibt null zurueck, wenn der
+                    Parameter fehlt – deshalb die Null-Pruefung.
+  ctx.json(objekt)  wandelt das Java-Objekt automatisch in JSON um
+                    (dafuer ist Jackson im build.gradle) und setzt den
+                    Content-Type-Header auf application/json.
+
+  ctx -> { ... }    wieder ein Lambda. Der Handler ist eine Funktion, die
+                    spaeter bei jeder Anfrage aufgerufen wird.
+
+HTTP-METHODEN (zum Einordnen)
+  GET     Daten lesen         app.get(...)
+  POST    Daten anlegen       app.post(...)
+  PUT     Daten aendern       app.put(...)
+  DELETE  Daten loeschen      app.delete(...)
+
+Wir haben bisher nur GET /books.
+
+WARUM ZWEI main-METHODEN?
+LibraryAppMain und JavalinMain nutzen denselben Kern (Repositories, Modelle),
+haben aber unterschiedliche Benutzeroberflaechen: Konsole vs. HTTP.
+Das ist genau der Vorteil der Schichtenarchitektur – die Geschaeftslogik
+liegt nicht in der Oberflaeche.
+
+STOLPERSTELLE
+Integer.parseInt(limitParam) wirft eine NumberFormatException, wenn jemand
+?limit=abc aufruft. Dann antwortet Javalin mit HTTP 500. Sauberer waere ein
+try/catch und HTTP 400 (Bad Request) – eine gute Uebungsaufgabe.
+
+
+================================================================================
+13. TESTS MIT JUNIT
+================================================================================
+Datei: src/test/java/ch/bzz/LibraryAppMainTest.java
+
+Tests pruefen automatisch, ob der Code noch tut, was er soll. Ausfuehren:
+
+    .\gradlew.bat test
+
+DIE ANNOTATIONEN
+
+  @Test        markiert eine Testmethode
+  @BeforeAll   laeuft EINMAL vor allen Tests (static!)
+  @AfterAll    laeuft EINMAL nach allen Tests (static!)
+  @BeforeEach  laeuft vor JEDEM Test
+  @AfterEach   laeuft nach JEDEM Test
+
+DIE ASSERTIONS (Behauptungen)
+
+  assertEquals(erwartet, tatsaechlich)   muss gleich sein
+  assertTrue(bedingung)                  muss true sein
+  assertFalse(bedingung)                 muss false sein
+  assertNotNull(objekt)                  darf nicht null sein
+  assertNull(objekt)                     muss null sein
+  assertDoesNotThrow(() -> ...)          darf keine Exception werfen
+
+  Der letzte String-Parameter ist die Meldung, die bei Fehlschlag erscheint.
+  Immer ausfuellen – sonst steht im Fehlerfall nur "expected true".
+
+VORBEREITUNG DER TESTDATEN
+
+    @BeforeAll
+    static void insertTestData() {
+        emf = Persistence.createEntityManagerFactory("localPU", Config.getProperties());
+
+        try (var em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.merge(new Book(1, "978-0134685991", "Effective Java", "Joshua Bloch", 2018));
+            em.merge(new Book(2, "978-0596009205", "Head First Java", "Kathy Sierra, Bert Bates", 2005));
+            em.getTransaction().commit();
+        }
+    }
+
+    @AfterAll
+    static void tearDown() {
+        if (emf != null) { emf.close(); }
+    }
+
+  merge statt persist, weil die Buecher beim zweiten Testlauf schon
+  existieren. persist wuerde dann scheitern.
+  Die ids 1 und 2 werden hier absichtlich fest vorgegeben, damit
+  "listBooks 1" verlaesslich "Effective Java" liefert.
+  @AfterAll gibt die Verbindungen wieder frei.
+
+EIN- UND AUSGABE UMLEITEN – DER TRICK
+
+    private ByteArrayOutputStream prepareStreams(String input) {
+        var in  = new ByteArrayInputStream(input.getBytes());
+        var out = new ByteArrayOutputStream();
+
+        System.setIn(in);
+        System.setOut(new PrintStream(out));
+
+        return out;
+    }
+
+  System.setIn(...)   die "Tastatur" wird durch einen festen Text ersetzt.
+                      Der Scanner in main() liest also die Testeingabe.
+  System.setOut(...)  die "Konsole" wird durch einen Puffer ersetzt.
+                      Alles, was das Programm ausgibt, landet im
+                      ByteArrayOutputStream und kann geprueft werden.
+
+  Deshalb endet jede Testeingabe mit "quit\n" – sonst wuerde die
+  while-Schleife nie verlassen.
+
+  Danach kann man pruefen:
+      var output = out.toString();
+      assertTrue(output.contains("Effective Java"), "...");
+
+DER USER-TEST
+
+    @Test
+    void testCreateUserCommand() {
+        // Arrange – alten Testbenutzer entfernen
+        try (var em = emf.createEntityManager()) {
+            em.getTransaction().begin();
+            em.createQuery("DELETE FROM User u WHERE u.email = 'max.mustermann@example.com'")
+              .executeUpdate();
+            em.getTransaction().commit();
+        }
+
+        String input = "createUser Max Mustermann 1990-05-21 max.mustermann@example.com geheim123\nquit\n";
+        System.setIn(new ByteArrayInputStream(input.getBytes()));
+
+        // Act
+        LibraryAppMain.main(new String[]{});
+
+        // Assert
+        try (var em = emf.createEntityManager()) {
+            User user = em.createQuery("SELECT u FROM User u WHERE u.email = :email", User.class)
+                    .setParameter("email", "max.mustermann@example.com")
+                    .getResultStream().findFirst().orElse(null);
+
+            assertNotNull(user, "User should exist in database");
+            assertEquals("Max", user.getFirstname());
+            assertEquals("Mustermann", user.getLastname());
+            assertEquals("1990-05-21", user.getDateOfBirth().toString());
+            assertNotNull(user.getPasswordHash(), "PasswordHash should be set");
+            assertNotNull(user.getPasswordSalt(), "PasswordSalt should be set");
+        }
+    }
+
+  Warum wird zuerst geloescht?
+      E-Mail ist unique. Beim zweiten Testlauf wuerde das Einfuegen sonst
+      scheitern. Tests muessen wiederholbar sein.
+
+  executeUpdate()
+      Fuer aendernde Queries (DELETE, UPDATE). Gibt die Anzahl betroffener
+      Zeilen zurueck. Muss in einer Transaktion laufen.
+
+  Der Hash wird nur auf "nicht null" geprueft, nicht auf einen konkreten
+  Wert – weil der Salt zufaellig ist und der Hash bei jedem Lauf anders
+  aussieht. Genau so soll es sein.
+
+DAS ARRANGE-ACT-ASSERT-MUSTER
+Jeder gute Test hat drei Teile:
+  Arrange   Vorbereiten (Daten anlegen, Eingabe setzen)
+  Act       Die zu testende Aktion ausfuehren
+  Assert    Pruefen, ob das Ergebnis stimmt
+Die Kommentare im Testcode markieren diese Abschnitte.
+
+
+================================================================================
+14. BUILD.GRADLE – ABHAENGIGKEITEN UND BUILD
+================================================================================
+
+    plugins { id 'java' }
+
+    group   = 'ch.bzz'
+    version = '1.0-SNAPSHOT'
+
+    repositories { mavenCentral() }
+
+    dependencies {
+        implementation 'io.javalin:javalin:6.7.0'
+        implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.2'
+        implementation 'jakarta.persistence:jakarta.persistence-api:3.1.0'
+        implementation 'org.hibernate.orm:hibernate-core:6.4.4.Final'
+        implementation 'org.hibernate.orm:hibernate-hikaricp:6.4.4.Final'
+        implementation 'com.zaxxer:HikariCP:5.1.0'
+        implementation 'org.postgresql:postgresql:42.7.3'
+        implementation 'org.slf4j:slf4j-api:2.0.9'
+        implementation 'ch.qos.logback:logback-classic:1.4.11'
+
+        testImplementation 'org.junit.jupiter:junit-jupiter:5.10.2'
+    }
+
+    test { useJUnitPlatform() }
+
+WAS IST GRADLE?
+Ein Build-Werkzeug. Es kompiliert den Code, laedt Bibliotheken aus dem
+Internet und fuehrt Tests aus. Alternative: Maven (mit pom.xml).
+
+  mavenCentral()      das grosse oeffentliche Repository fuer Java-Bibliotheken
+  implementation      Abhaengigkeit fuer den Hauptcode
+  testImplementation  Abhaengigkeit nur fuer Tests (JUnit landet nicht im
+                      fertigen Programm)
+
+Die Schreibweise 'gruppe:name:version' identifiziert eine Bibliothek
+eindeutig. Gradle laedt sie automatisch herunter – man muss keine .jar-Dateien
+von Hand verwalten. Transitive Abhaengigkeiten (Abhaengigkeiten der
+Abhaengigkeiten) kommen automatisch mit.
+
+WOFUER IST WAS DA?
+  javalin                  Webserver / REST
+  jackson-databind         Java-Objekte <-> JSON (nutzt Javalin intern)
+  jakarta.persistence-api  die JPA-Interfaces (der Standard)
+  hibernate-core           die JPA-Implementierung
+  hibernate-hikaricp       Bindeglied Hibernate <-> HikariCP
+  HikariCP                 Connection Pool
+  postgresql               JDBC-Treiber fuer PostgreSQL
+  slf4j-api                Logging-Schnittstelle
+  logback-classic          Logging-Implementierung
+  junit-jupiter            Testframework (JUnit 5)
+
+  useJUnitPlatform()       sagt Gradle, dass JUnit 5 benutzt wird.
+                           Ohne diese Zeile werden keine Tests gefunden.
+
+WICHTIGE BEFEHLE (PowerShell auf Windows)
+
+    .\gradlew.bat build      kompilieren + testen
+    .\gradlew.bat test       nur Tests
+    .\gradlew.bat clean      build-Ordner loeschen
+    .\gradlew.bat run        Programm starten (braucht das application-Plugin)
+
+  gradlew ist der "Gradle Wrapper": ein kleines Skript, das die richtige
+  Gradle-Version selbst herunterlaedt. Dadurch braucht niemand Gradle
+  vorher zu installieren, und alle benutzen dieselbe Version.
+
+  ACHTUNG PowerShell: "&&" funktioniert nicht zum Verketten von Befehlen.
+  Stattdessen ";" verwenden.
+
+
+================================================================================
+15. WICHTIGE JAVA-KONZEPTE IM PROJEKT (GLOSSAR)
+================================================================================
+
+KLASSE UND OBJEKT
+  Klasse = Bauplan (Book)
+  Objekt = konkretes Exemplar (new Book())
+  Aus einer Klasse kann man beliebig viele Objekte erzeugen.
+
+FELD, METHODE, KONSTRUKTOR
+  Feld         eine Variable in der Klasse (private String title;)
+  Methode      eine Funktion in der Klasse (getTitle())
+  Konstruktor  spezielle Methode zum Erzeugen; heisst wie die Klasse und hat
+               keinen Rueckgabetyp
+
+SICHTBARKEIT
+  private      nur innerhalb der eigenen Klasse
+  (nichts)     im gleichen Package ("package-private")
+  protected    Package + Unterklassen
+  public       ueberall
+
+  Regel: so restriktiv wie moeglich. Felder private, Methoden nach Bedarf.
+
+static
+  Gehoert zur Klasse, nicht zum Objekt. Aufruf ueber den Klassennamen:
+      PasswordHandler.generateSalt()
+  Nicht-statische Methoden brauchen ein Objekt:
+      bookRepository.getAll(5)
+
+final
+  Bei Variablen: Wert/Referenz kann nicht mehr geaendert werden.
+  ACHTUNG: final verhindert nur die Neuzuweisung. Der Inhalt eines
+  final-Objekts kann sich trotzdem aendern (z.B. die COMMANDS-Map wird
+  im static-Block gefuellt, obwohl sie final ist).
+
+INTERFACE
+  Ein Vertrag ohne Implementierung. Wer es implementiert, muss die Methoden
+  anbieten. Beispiel bei uns: CommandAction.
+
+GETTER UND SETTER
+  Standard-Namensgebung:
+      getTitle() / setTitle(...)
+      bei boolean: isActive()
+  Hibernate und Jackson erwarten genau dieses Muster.
+  ACHTUNG: bei einem "record" heissen die Getter anders – nur
+  description() statt getDescription().
+
+WRAPPER-TYPEN
+  primitiv:  int, long, double, boolean, char, byte
+  Wrapper:   Integer, Long, Double, Boolean, Character, Byte
+
+  Wrapper koennen null sein, primitive nicht.
+  Deshalb ist die id ein Integer: vor dem Speichern ist sie null.
+  "Autoboxing" wandelt automatisch um: int -> Integer und zurueck.
+
+COLLECTIONS
+  List<T>    geordnete Liste mit Duplikaten (ArrayList)
+  Set<T>     ohne Duplikate (HashSet)
+  Map<K,V>   Schluessel -> Wert (HashMap, LinkedHashMap)
+
+  Das <T> sind "Generics": sie legen den Inhaltstyp fest.
+  List<Book> enthaelt nur Books – der Compiler prueft das.
+
+LAMBDAS UND METHOD REFERENCES
+  () -> false                Funktion ohne Parameter
+  x -> x * 2                 mit einem Parameter
+  (a, b) -> a + b            mit zwei Parametern
+  em::merge                  Method Reference, kurz fuer x -> em.merge(x)
+  LibraryAppMain::printHelp  Method Reference auf eine statische Methode
+
+EXCEPTIONS
+  Checked (z.B. IOException, NoSuchAlgorithmException)
+      Der Compiler erzwingt try/catch oder "throws".
+  Unchecked / RuntimeException (z.B. NumberFormatException,
+  NullPointerException, IllegalArgumentException)
+      Muss man nicht behandeln, kann man aber.
+
+  try {
+      ... kann schiefgehen ...
+  } catch (SpezifischeException e) {
+      ... Fehlerbehandlung ...
+  } finally {
+      ... laeuft immer ...
+  }
+
+  Reihenfolge der catch-Bloecke: spezifisch vor allgemein.
+  try-with-resources ersetzt in vielen Faellen das finally.
+
+RECORD
+  Kurzform fuer unveraenderliche Datenklassen (ab Java 16).
+      private record Command(String description, CommandAction action) { }
+  Ersetzt Konstruktor, Getter, equals, hashCode, toString.
+
+var
+  Typ-Inferenz (ab Java 10). Nur fuer lokale Variablen.
+      var em = emf.createEntityManager();
+  Der Typ ist trotzdem fest – Java bleibt statisch typisiert.
+
+
+================================================================================
+16. HAEUFIGE FEHLER UND WIE MAN SIE ERKENNT
+================================================================================
+
+"config.properties konnte nicht geladen werden"
+    Die Datei fehlt oder man startet aus dem falschen Ordner.
+    Der Pfad ist relativ zum Arbeitsverzeichnis – das muss der
+    Projekt-Wurzelordner sein.
+    -> config.properties.template kopieren und ausfuellen.
+
+"Connection refused" / "Connection to localhost:5432 refused"
+    PostgreSQL laeuft nicht oder falscher Port.
+    -> Datenbankdienst starten, URL in config.properties pruefen.
+
+"Unknown entity: ch.bzz.model.User" oder "User is not mapped"
+    Die Entity fehlt in persistence.xml oder @Entity fehlt an der Klasse.
+    -> <class>ch.bzz.model.User</class> ergaenzen.
+
+"No default constructor for entity"
+    Der leere Konstruktor fehlt.
+    -> public User() { } hinzufuegen.
+
+"relation \"users\" does not exist"
+    Die Tabelle wurde nicht erzeugt.
+    -> hbm2ddl.auto pruefen, Entity in persistence.xml eingetragen?
+
+ERROR: syntax error at or near "user"
+    "user" ist in PostgreSQL reserviert.
+    -> @Table(name = "users") verwenden.
+
+"duplicate key value violates unique constraint"
+    Eine unique-Spalte (email, isbn) enthaelt den Wert schon.
+    -> vorher pruefen oder loeschen (macht der Test bewusst).
+
+NumberFormatException
+    Integer.parseInt hat keinen gueltigen Zahlentext bekommen.
+    -> Eingabe pruefen und in try/catch fangen.
+
+DateTimeParseException
+    Datum nicht im Format yyyy-MM-dd.
+    -> "1990-05-21", nicht "21.05.1990".
+
+NullPointerException
+    Zugriff auf etwas, das null ist. Typisch: queryParam gibt null zurueck.
+    -> vor der Benutzung auf null pruefen.
+
+ArrayIndexOutOfBoundsException im BookImporter
+    Die Zeile hat weniger Spalten als erwartet.
+    -> split("\t", -1) mit der -1, leere Zeilen ueberspringen.
+
+Tests laufen nicht / "No tests found"
+    useJUnitPlatform() fehlt in build.gradle, oder die Testklasse liegt
+    nicht unter src/test/java.
+
+Umlaute kaputt beim Import
+    Falscher Zeichensatz.
+    -> StandardCharsets.UTF_8 explizit angeben.
+
+WO SCHAUT MAN BEI FEHLERN?
+    1. Die Konsolenausgabe (ERROR-Meldungen erscheinen dort)
+    2. logs/app.log – dort steht ALLES inklusive Stacktrace und SQL
+    3. build/reports/tests/test/index.html – HTML-Bericht der Tests
+
+STACKTRACE LESEN
+    Die OBERSTE Zeile ist die Stelle, wo der Fehler aufgetreten ist.
+    Nach unten wird es allgemeiner (wer hat wen aufgerufen).
+    "Caused by:" weiter unten nennt oft die eigentliche Ursache –
+    dort zuerst nachsehen.
+    Suche nach Zeilen mit "ch.bzz" – das ist unser eigener Code.
+
+
+================================================================================
+17. UEBUNGSAUFGABEN ZUM SELBERMACHEN
+================================================================================
+
+Reihenfolge nach Schwierigkeit. Nach jeder Aufgabe: .\gradlew.bat test
+
+STUFE 1 – EINSTIEG
+
+  1) createUser in die help-Ausgabe aufnehmen.
+     Datei: LibraryAppMain, der static-Block mit COMMANDS.
+     Schau dir an, wie importBooks dort eingetragen ist.
+     Achtung: der Befehl selbst wird schon vorher per startsWith behandelt,
+     der Map-Eintrag ist nur fuer die Beschreibung da.
+
+  2) Einen Befehl "version" bauen, der eine Versionsnummer ausgibt.
+     Ein Map-Eintrag plus eine kleine Methode, die true zurueckgibt.
+
+  3) Book.toString() so aendern, dass Titel und Autor ausgegeben werden.
+     Danach die Tests laufen lassen – sie sollten weiter gruen sein.
+     Warum? Weil contains("Effective Java") immer noch passt.
+
+STUFE 2 – MIT DATEN ARBEITEN
+
+  4) Befehl "countBooks", der die Anzahl der Buecher ausgibt.
+     Neue Methode in BookRepository:
+         SELECT COUNT(b) FROM Book b
+     Rueckgabetyp ist Long. Tipp: getSingleResult().
+
+  5) Methode findUserByEmail(String email) in UserRepository.
+     JPQL mit :email-Parameter, getResultStream().findFirst().orElse(null).
+     Vorbild: der Assert-Teil in testCreateUserCommand.
+
+  6) Befehl "listUsers", der alle Benutzer ausgibt.
+     Vorsicht: NIE Hash oder Salt ausgeben! Nur Name, Geburtsdatum, E-Mail.
+     Dazu braucht User ein sinnvolles toString().
+
+STUFE 3 – ROBUSTHEIT UND SICHERHEIT
+
+  7) createUser soll pruefen, ob die E-Mail schon existiert, und eine
+     freundliche Meldung ausgeben statt einen DB-Fehler zu produzieren.
+     Nutzt Aufgabe 5.
+
+  8) E-Mail-Format grob pruefen (enthaelt "@" und einen Punkt danach).
+     Bei ungueltiger Eingabe: Meldung und return.
+
+  9) Methode checkPassword(String email, String password) schreiben:
+     Benutzer laden, Salt Base64-dekodieren, Hash neu berechnen,
+     mit dem gespeicherten Hash vergleichen. Dann Befehl "login" bauen.
+
+ 10) In JavalinMain den limit-Parameter in try/catch fassen und bei
+     ungueltiger Eingabe HTTP 400 statt 500 liefern.
+     Tipp: ctx.status(400).result("...").
+
+STUFE 4 – NEUE KONZEPTE
+
+ 11) Eine Entity "Loan" (Ausleihe) anlegen mit Feldern id, user, book,
+     borrowedAt, returnedAt.
+     Neue Annotationen: @ManyToOne fuer die Beziehungen zu User und Book.
+     Nicht vergessen: Eintrag in persistence.xml.
+     Das ist genau die Anforderung 5 ("wer hat welches Buch ausgeliehen").
+
+ 12) Befehl "borrowBook <userEmail> <isbn>", der eine Ausleihe anlegt.
+
+ 13) REST-Endpunkt GET /users, der alle Benutzer als JSON liefert –
+     aber ohne Hash und Salt. Tipp: @JsonIgnore von Jackson.
+
+ 14) Eigene Testklasse UserRepositoryTest schreiben, die findUserByEmail
+     direkt testet (ohne den Umweg ueber die Konsole).
+
+WIE MAN EINE AUFGABE ANGEHT
+  1. Ein aehnliches Beispiel im Projekt suchen (Book -> User funktioniert
+     fast immer als Vorlage).
+  2. Erst klein anfangen: System.out.println zum Pruefen, ob man an der
+     richtigen Stelle ist.
+  3. Den Debugger benutzen: Breakpoint setzen, Programm starten, Werte
+     ansehen. In IntelliJ mit Klick links neben die Zeilennummer.
+  4. Nach jeder Aenderung Tests laufen lassen.
+  5. Bei Fehlern: logs/app.log lesen, Stacktrace von oben nach unten.
+
+
+================================================================================
+SCHNELLREFERENZ
+================================================================================
+
+BEFEHLE (Konsole)
+    help
+    listBooks
+    listBooks 5
+    importBooks data/books.tsv
+    createUser Max Mustermann 1990-05-21 max.mustermann@example.com geheim123
+    quit
+
+REST-API
+    http://localhost:7070/books
+    http://localhost:7070/books?limit=3
+
+GRADLE (PowerShell)
+    .\gradlew.bat test
+    .\gradlew.bat build
+    .\gradlew.bat clean
+
+WICHTIGE DATEIEN
+    config.properties                       DB-Zugangsdaten (nicht in Git)
+    src/main/resources/META-INF/persistence.xml   JPA-Konfiguration
+    src/main/resources/logback.xml          Logging
+    logs/app.log                            Log-Ausgabe
+    build/reports/tests/test/index.html     Testbericht
+
+JPA-CHECKLISTE FUER EINE NEUE ENTITY
+    [ ] @Entity ueber der Klasse
+    [ ] @Table(name = "...") mit Plural-Tabellennamen
+    [ ] @Id und @GeneratedValue am id-Feld
+    [ ] @Column an den uebrigen Feldern
+    [ ] leerer Konstruktor vorhanden
+    [ ] Getter und Setter fuer alle Felder
+    [ ] <class>...</class> in persistence.xml ergaenzt
+
+================================================================================
+Ende der Notizen.
+================================================================================
